@@ -5,11 +5,10 @@ class OpeningRangeBreakout(QCAlgorithm):
     def Initialize(self):
         self.SetStartDate(2021, 1, 30)  
         self.SetEndDate(2021, 12, 15)  
-        self.SetCash(100000)
+        self.SetCash(10000)
         self.AddEquity("SPY", Resolution.Minute)
         self.Consolidate("SPY", timedelta(minutes=30), self.OnDataConsolidated)
         
-        # 3. Create a scheduled event triggered at 13:30 calling the ClosePositions function
         self.Schedule.On(self.DateRules.EveryDay("SPY"), self.TimeRules.At(13, 30), self.ClosePositions)
         
     def OnData(self, data):
@@ -27,8 +26,7 @@ class OpeningRangeBreakout(QCAlgorithm):
         if bar.Time.hour == 9 and bar.Time.minute == 30:
             self.openingBar = bar
     
-    #1. Create a function named ClosePositions(self)
     def ClosePositions(self):
-        #2. Set self.openingBar to None, and liquidate TSLA 
         self.openingBar = None
         self.Liquidate("SPY")
+        
