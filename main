@@ -1,32 +1,70 @@
+# First 30 minutes Highest High and Lowest Low
+
+# -------------------------
+STOCK = "SPY"; PERIOD = 30;
+# -------------------------
+
 class OpeningRangeBreakout(QCAlgorithm):
-
-    openingBar = None 
     
+    # Order ticket for our stop order, Datetime when stop order was last hit
+    stopMarketTicket = None
+    stopMarketOrderFillTime = datetime.min
+    highestSPYPrice = -1
+
     def Initialize(self):
-        self.SetStartDate(2021, 1, 30)  
-        self.SetEndDate(2021, 12, 15)  
-        self.SetCash(10000)
-        self.AddEquity("SPY", Resolution.Minute)
-        self.Consolidate("SPY", timedelta(minutes=30), self.OnDataConsolidated)
+        self.SetStartDate(2021, 9, 1)  
+        self.SetEndDate(2021, 9, 10)  
+        self.SetCash(100000) 
+        self.stock = self.AddEquity(STOCK, Resolution.Minute).Symbol
+        self.max = self.MAX(self.stock, PERIOD, Resolution.Minute, Field.High)
+        self.min = self.MIN(self.stock, PERIOD, Resolution.Minute, Field.Low)
+        self.SetWarmUp(PERIOD, Resolution.Minute)
         
-        self.Schedule.On(self.DateRules.EveryDay("SPY"), self.TimeRules.At(13, 30), self.ClosePositions)
-        
-    def OnData(self, data):
-        
-        if self.Portfolio.Invested or self.openingBar is None:
-            return
-        
-        if data["SPY"].Close > self.openingBar.High:
-            self.SetHoldings("SPY", 1)
 
-        elif data["SPY"].Close < self.openingBar.Low:
-            self.SetHoldings("SPY", -1)  
-         
-    def OnDataConsolidated(self, bar):
-        if bar.Time.hour == 9 and bar.Time.minute == 30:
-            self.openingBar = bar
-    
-    def ClosePositions(self):
-        self.openingBar = None
-        self.Liquidate("SPY")
+    def OnData(self, data):
+        # # 1. Plot the current SPY price to "Data Chart" on series "Asset Price"
+        # self.Plot("Data Chart", "Asset Price", self.Securities["SPY"].Close)
+        
+        if self.IsWarmingUp: 
+            return
+        if not (self.max.IsReady or self.mi.IsReady): 
+            return
+        if self.Time.hour < 10 or self.Time.hour > 10 or self.Time.minute != 31: 
+            return
+
+        first_30_min_HH = self.max.Current.Value
+        first_30_min_LL = self.min.Current.Value
+
+        self.Log(f"First 30 min Highest High: {first_30_min_HH}")
+        self.Log(f"First 30 min Lowest Low: {first_30_min_LL}")
+        
+        self.Plot("Data Chart", 'first_30_min_HH', first_30_min_HH)
+        self.Plot("Data Chart", 'first_30_min_LL', first_30_min_LL)
+        
+        if not self.Portfolio.Invested:
+            if data["SPY"].Close > first_30_min_HH:
+                self.MarketOrder("SPY", 500)
+                self.stopMarketTicket = self.StopMarketOrder("SPY", -500, 0.9 * self.Securities["SPY"].Close)
+                
+            elif data["SPY"].Close < first_30_min_LL:
+                self.MarketOrder("SPY", -500)
+                self.stopMarketTicket = self.StopMarketOrder("SPY", +500,  * self.Securities["SPY"].Close)
+        
+        else:
+            
+            #2. Plot the moving stop price on "Data Chart" with "Stop Price" series name
+            self.Plot("Data Chart", "Stop Price",  self.highestSPYPrice * 0.9)
+            
+            if self.Securities["SPY"].Close > self.highestSPYPrice:
+                
+                self.highestSPYPrice = self.Securities["SPY"].Close
+                updateFields = UpdateOrderFields()
+                updateFields.StopPrice = self.highestSPYPrice * 0.9
+                self.stopMarketTicket.Update(updateFields) 
+            
+    def OnOrderEvent(self, orderEvent):
+        
+        if orderEvent.Status != OrderStatus.Filled:
+            return
+            
         
