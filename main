@@ -3,8 +3,8 @@ class OpeningRangeBreakout(QCAlgorithm):
     openingBar = None 
     
     def Initialize(self):
-        self.SetStartDate(2022, 4, 20)  
-        self.SetEndDate(2022, 12, 30)  
+        self.SetStartDate(2022, 4, 22)  
+        self.SetEndDate(2022, 5, 9)  
         self.SetCash(100000)
         self.stock = self.AddEquity("SPY", Resolution.Minute).Symbol
         self.max = self.MAX(self.stock, 30, Resolution.Minute)
@@ -14,16 +14,18 @@ class OpeningRangeBreakout(QCAlgorithm):
         self.stopMarketTicket = None
         self.stopMarketTicketShort = None
         self.highestSPYPrice = 0 # definitely higher than this
-        self.lowestSPYPrice = 1000000 #almost certainly  than this...
+        self.lowestSPYPrice = 1000000 #almost certainly lower than this...
         
         self.spy30High = 0
         self.spy30Low = 0
         
         # at 10AM the new method is called to save down values
         self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.AfterMarketOpen(self.stock, 30), self.First30Values)
+        
+        # if stop loss not hit, close the order before the end of the day
         self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.BeforeMarketClose(self.stock, 5), self.Liquidate)
         
-        #saves value of indcators at 10 am
+        # saves value of indcators at 10AM
     def First30Values(self):
         self.spy30High = self.max.Current.Value
         self.spy30Low = self.min.Current.Value
@@ -34,6 +36,8 @@ class OpeningRangeBreakout(QCAlgorithm):
         self.spy30Low = 0
         self.stopMarketTicket = None
         self.stopMarketTicketShort = None
+        self.highestSPYPrice = 0 # definitely higher than this
+        self.lowestSPYPrice = 1000000 #almost certainly lower than this...
         
         
     def OnData(self, data):
@@ -50,6 +54,9 @@ class OpeningRangeBreakout(QCAlgorithm):
                 updateFields.StopPrice = self.highestSPYPrice * 0.995
                 if self.stopMarketTicket != None: ### your update request was returning NoneType because of your conditional logic, attempting to update tickets that did not exist
                     self.stopMarketTicket.Update(updateFields)
+                    self.Debug("SPY.High " + str(self.Securities["SPY"].High))
+                    self.Debug("highestSPYPrice " + str(self.highestSPYPrice))
+                    
                     
             if self.Securities["SPY"].Low < self.lowestSPYPrice:
                 #2. Save the new high to highestSPYPrice; then update the stop price to 90% of highestSPYPrice
@@ -58,6 +65,8 @@ class OpeningRangeBreakout(QCAlgorithm):
                 updateFields.StopPrice = self.lowestSPYPrice * 1.005
                 if self.stopMarketTicketShort != None: ### your update request was returning NoneType because of your conditional logic, attempting to update tickets that did not exist
                     self.stopMarketTicketShort.Update(updateFields)
+                    self.Debug("SPY.Low " + str(self.Securities["SPY"].Low))
+                    self.Debug("lowestSPYPrice " + str(self.lowestSPYPrice))
                     
         if self.Time.hour < 10 or self.Time.hour > 10:
             return
