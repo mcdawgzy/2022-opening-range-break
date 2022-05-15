@@ -15,6 +15,7 @@ class OpeningRangeBreakout(QCAlgorithm):
         self.stopMarketTicketShort = None
         self.highestSPYPrice = 0 # definitely higher than this
         self.lowestSPYPrice = 1000000 #almost certainly lower than this...
+        self.tradeLimit = True
         
         self.spy30High = 0
         self.spy30Low = 0
@@ -38,6 +39,7 @@ class OpeningRangeBreakout(QCAlgorithm):
         self.stopMarketTicketShort = None
         self.highestSPYPrice = 0 # definitely higher than this
         self.lowestSPYPrice = 1000000 #almost certainly lower than this...
+        self.tradeLimit = True
         
         
     def OnData(self, data):
@@ -73,16 +75,18 @@ class OpeningRangeBreakout(QCAlgorithm):
         
         price = self.Securities[self.stock].Price
     
-        if not self.Portfolio.Invested:
+        if not self.Portfolio.Invested and self.tradeLimit == True:
         
             if price > self.spy30High:
                 self.SetHoldings("SPY", 1.0)
                 self.stopMarketTicket = self.StopMarketOrder("SPY", -self.Portfolio["SPY"].Quantity, 0.995 * price)
+                self.tradeLimit = False
                 # self.limitOrderTicket = self.LimitOrder("SPY", -self.Portfolio["SPY"].Quantity, 1.01 * price)
                 
             elif price < self.spy30Low:
                 self.SetHoldings("SPY", -1.0)
                 self.stopMarketTicketShort = self.StopMarketOrder("SPY", -self.Portfolio["SPY"].Quantity, 1.005 * price)
+                self.tradeLimit = False
                 # self.limitOrderTicketShort = self.LimitOrder("SPY", -self.Portfolio["SPY"].Quantity, .99 * price)
                 
             
