@@ -11,18 +11,21 @@ STOCK = "SPY"; PERIOD = 30; WAIT = 0
 class OpeningRangeBreakout(QCAlgorithm):
 
     def Initialize(self):
-        self.SetStartDate(2020, 5, 1)  
-        self.SetEndDate(2022, 5, 5)  
+        self.SetStartDate(2022, 4, 27)  
+        self.SetEndDate(2022, 4, 29)  
         self.SetCash(100000) 
         self.stock = self.AddEquity(STOCK, Resolution.Minute).Symbol
         self.hh = self.MAX(self.stock, PERIOD, Resolution.Minute, Field.High)
         self.ll = self.MIN(self.stock, PERIOD, Resolution.Minute, Field.Low)
-        self.hh_d = IndicatorExtensions.Of(Delay(1), self.hh)
-        self.ll_d = IndicatorExtensions.Of(Delay(1), self.ll)
+        # self.hh_d = IndicatorExtensions.Of(Delay(1), self.hh)
+        # self.ll_d = IndicatorExtensions.Of(Delay(1), self.ll)
         self.SetWarmUp(PERIOD + 1, Resolution.Minute)
         self.first_30_min_HH = 0
         self.first_30_min_LL = 0
+        self.trailingH = 0
+        self.trailingL = 0
         self.wait = WAIT
+        self.tradeLimit = True
         
         # Check if the data is warmed up and ready to trade
         self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.AfterMarketOpen(self.stock, 31), self.DailyCheck)
@@ -32,15 +35,17 @@ class OpeningRangeBreakout(QCAlgorithm):
 
     def DailyCheck(self):
         if self.IsWarmingUp: return
-        if not (self.hh_d.IsReady or self.ll_d.IsReady): return
+        # if not (self.hh_d.IsReady or self.ll_d.IsReady): return
     
-        self.first_30_min_HH = self.hh_d.Current.Value
-        self.first_30_min_LL = self.ll_d.Current.Value
+        # self.first_30_min_HH = self.hh_d.Current.Value
+        # self.first_30_min_LL = self.ll_d.Current.Value
+        self.first_30_min_HH = self.hh.Current.Value
+        self.first_30_min_LL = self.ll.Current.Value
         
     
     def OnData(self, data):
         if self.IsWarmingUp: return
-        if not (self.hh_d.IsReady or self.ll_d.IsReady): return
+        # if not (self.hh_d.IsReady or self.ll_d.IsReady): return
         if self.Time.hour < 10 or self.Time.hour >= 16: return
         if (self.first_30_min_HH ==0 or self.first_30_min_LL == 0): return
     
@@ -52,24 +57,46 @@ class OpeningRangeBreakout(QCAlgorithm):
 
         # If portfolio not invested, open a position if it breaks the opening range
         if not self.Portfolio[self.stock].Invested:
-            if price > self.first_30_min_HH:
+            if price > self.first_30_min_HH and self.tradeLimit == True:
                 self.SetHoldings(self.stock, 1)
+                self.stopMarketTicket = self.StopMarketOrder("SPY", -self.Portfolio["SPY"].Quantity, 0.995 * price)
+                self.tradeLimit = False
                 
             elif price < self.first_30_min_LL:
                 self.SetHoldings(self.stock, -1)
+                self.stopMarketTicketShort = self.StopMarketOrder("SPY", -self.Portfolio["SPY"].Quantity, 1.005 * price)
+                self.tradeLimit = False
                 
         # If portfolio is invested, use a trailing stop        
         elif self.Portfolio[self.stock].Invested:
-            if pnl >= TP: 
-                self.Liquidate(self.stock, "Take Profit") 
-                self.wait = 0
+            # if pnl >= TP: 
+            #     self.Liquidate(self.stock, "Take Profit") 
+            #     self.wait = 0
                 
-            elif pnl < SL: 
-                self.Liquidate(self.stock, "Stop Loss") 
-                self.wait = 0
-                
+            # elif pnl < SL: 
+            #     self.Liquidate(self.stock, "Stop Loss") 
+            #     self.wait = 0
+            if self.Securities["SPY"].High > self.first_30_min_HH:
+                self.trailingH = self.Securities["SPY"].High
+                updateFields = UpdateOrderFields()
+                updateFields.StopPrice = self.trailingH * 0.995
+                if self.stopMarketTicket != None: ### your update request was returning NoneType because of your conditional logic, attempting to update tickets that did not exist
+                    self.stopMarketTicket.Update(updateFields)
+
+            elif self.Securities["SPY"].Low < self.first_30_min_LL:
+                self.trailingL = self.Securities["SPY"].Low
+                updateFields = UpdateOrderFields()
+                updateFields.StopPrice = self.trailingL * 1.005
+                if self.stopMarketTicketShort != None: ### your update request was returning NoneType because of your conditional logic, attempting to update tickets that did not exist
+                    self.stopMarketTicketShort.Update(updateFields)
+
 
     def OnEndOfDay(self, symbol): 
-        if self.Portfolio[self.stock].Invested:
-            self.Liquidate(self.stock, "EOD")  
+        self.first_30_min_HH = 0
+        self.first_30_min_LL = 0
+        self.trailingH = 0
+        self.trailingL = 0
+        self.stopMarketTicket = None
+        self.stopMarketTicketShort = None
+        self.tradeLimit = True
         self.wait = WAIT
