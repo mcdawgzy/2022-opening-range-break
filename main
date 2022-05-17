@@ -1,99 +1,75 @@
+#region imports
+from AlgorithmImports import *
+#endregion
+# Opening Range Breakout
+
+# ------------------------------------------------------------
+STOCK = "SPY"; PERIOD = 30; WAIT = 0
+# ; SL = -0.005; TP = 0.005;
+# ------------------------------------------------------------
+
 class OpeningRangeBreakout(QCAlgorithm):
-    
-    openingBar = None 
-    
+
     def Initialize(self):
-        self.SetStartDate(2022, 4, 22)  
-        self.SetEndDate(2022, 5, 9)  
-        self.SetCash(100000)
-        self.stock = self.AddEquity("SPY", Resolution.Minute).Symbol
-        self.max = self.MAX(self.stock, 30, Resolution.Minute)
-        self.min = self.MIN(self.stock, 30, Resolution.Minute)
-        self.SetWarmUp(timedelta(minutes=30))
+        self.SetStartDate(2020, 5, 1)  
+        self.SetEndDate(2022, 5, 5)  
+        self.SetCash(100000) 
+        self.stock = self.AddEquity(STOCK, Resolution.Minute).Symbol
+        self.hh = self.MAX(self.stock, PERIOD, Resolution.Minute, Field.High)
+        self.ll = self.MIN(self.stock, PERIOD, Resolution.Minute, Field.Low)
+        self.hh_d = IndicatorExtensions.Of(Delay(1), self.hh)
+        self.ll_d = IndicatorExtensions.Of(Delay(1), self.ll)
+        self.SetWarmUp(PERIOD + 1, Resolution.Minute)
+        self.first_30_min_HH = 0
+        self.first_30_min_LL = 0
+        self.wait = WAIT
         
-        self.stopMarketTicket = None
-        self.stopMarketTicketShort = None
-        self.highestSPYPrice = 0 # definitely higher than this
-        self.lowestSPYPrice = 1000000 #almost certainly lower than this...
-        self.tradeLimit = True
-        
-        self.spy30High = 0
-        self.spy30Low = 0
-        
-        # at 10AM the new method is called to save down values
-        self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.AfterMarketOpen(self.stock, 30), self.First30Values)
-        
-        # if stop loss not hit, close the order before the end of the day
+        # Check if the data is warmed up and ready to trade
+        self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.AfterMarketOpen(self.stock, 31), self.DailyCheck)
+
+        # If stop loss is not hit, liquidate positions 5 mins before close
         self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.BeforeMarketClose(self.stock, 5), self.Liquidate)
-        
-        # saves value of indcators at 10AM
-    def First30Values(self):
-        self.spy30High = self.max.Current.Value
-        self.spy30Low = self.min.Current.Value
+
+    def DailyCheck(self):
+        if self.IsWarmingUp: return
+        if not (self.hh_d.IsReady or self.ll_d.IsReady): return
     
-       # resets the value for next day 
-    def OnEndOfDay(self):
-        self.spy30High = 0
-        self.spy30Low = 0
-        self.stopMarketTicket = None
-        self.stopMarketTicketShort = None
-        self.highestSPYPrice = 0 # definitely higher than this
-        self.lowestSPYPrice = 1000000 #almost certainly lower than this...
-        self.tradeLimit = True
+        self.first_30_min_HH = self.hh_d.Current.Value
+        self.first_30_min_LL = self.ll_d.Current.Value
         
-        
+    
     def OnData(self, data):
-        if self.IsWarmingUp: 
-            return
-        if not (self.max.IsReady or self.min.IsReady): 
-            return
-        
-        if self.Portfolio.Invested:
-            if self.Securities["SPY"].High > self.highestSPYPrice:
-                #2. Save the new high to highestSPYPrice; then update the stop price to 90% of highestSPYPrice
-                self.highestSPYPrice = self.Securities["SPY"].High
-                updateFields = UpdateOrderFields()
-                updateFields.StopPrice = self.highestSPYPrice * 0.995
-                if self.stopMarketTicket != None: ### your update request was returning NoneType because of your conditional logic, attempting to update tickets that did not exist
-                    self.stopMarketTicket.Update(updateFields)
-                    self.Debug("SPY.High " + str(self.Securities["SPY"].High))
-                    self.Debug("highestSPYPrice " + str(self.highestSPYPrice))
-                    
-                    
-            if self.Securities["SPY"].Low < self.lowestSPYPrice:
-                #2. Save the new high to highestSPYPrice; then update the stop price to 90% of highestSPYPrice
-                self.lowestSPYPrice = self.Securities["SPY"].Low
-                updateFields = UpdateOrderFields()
-                updateFields.StopPrice = self.lowestSPYPrice * 1.005
-                if self.stopMarketTicketShort != None: ### your update request was returning NoneType because of your conditional logic, attempting to update tickets that did not exist
-                    self.stopMarketTicketShort.Update(updateFields)
-                    self.Debug("SPY.Low " + str(self.Securities["SPY"].Low))
-                    self.Debug("lowestSPYPrice " + str(self.lowestSPYPrice))
-                    
-        if self.Time.hour < 10 or self.Time.hour > 10:
-            return
-        
-        price = self.Securities[self.stock].Price
+        if self.IsWarmingUp: return
+        if not (self.hh_d.IsReady or self.ll_d.IsReady): return
+        if self.Time.hour < 10 or self.Time.hour >= 16: return
+        if (self.first_30_min_HH ==0 or self.first_30_min_LL == 0): return
     
-        if not self.Portfolio.Invested and self.tradeLimit == True:
-        
-            if price > self.spy30High:
-                self.SetHoldings("SPY", 1.0)
-                self.stopMarketTicket = self.StopMarketOrder("SPY", -self.Portfolio["SPY"].Quantity, 0.995 * price)
-                self.tradeLimit = False
-                # self.limitOrderTicket = self.LimitOrder("SPY", -self.Portfolio["SPY"].Quantity, 1.01 * price)
+        self.wait += 1
+        if not self.wait > WAIT: return
+    
+        price = self.Securities[self.stock].Price
+        pnl = self.Securities[self.stock].Holdings.UnrealizedProfitPercent
+
+        # If portfolio not invested, open a position if it breaks the opening range
+        if not self.Portfolio[self.stock].Invested:
+            if price > self.first_30_min_HH:
+                self.SetHoldings(self.stock, 1)
                 
-            elif price < self.spy30Low:
-                self.SetHoldings("SPY", -1.0)
-                self.stopMarketTicketShort = self.StopMarketOrder("SPY", -self.Portfolio["SPY"].Quantity, 1.005 * price)
-                self.tradeLimit = False
-                # self.limitOrderTicketShort = self.LimitOrder("SPY", -self.Portfolio["SPY"].Quantity, .99 * price)
+            elif price < self.first_30_min_LL:
+                self.SetHoldings(self.stock, -1)
                 
-            
-    def OnOrderEvent(self, orderEvent):
-        if orderEvent.Status != OrderStatus.Filled:
-            return
-        if self.stopMarketTicket is not None and self.stopMarketTicket.OrderId == orderEvent.OrderId:
-            self.stopMarketOrderFillTime = self.Time
-        elif self.stopMarketTicketShort is not None and self.stopMarketTicketShort.OrderId == orderEvent.OrderId:
-            self.stopMarketOrderShortFillTime = self.Time
+        # If portfolio is invested, use a trailing stop        
+        elif self.Portfolio[self.stock].Invested:
+            if pnl >= TP: 
+                self.Liquidate(self.stock, "Take Profit") 
+                self.wait = 0
+                
+            elif pnl < SL: 
+                self.Liquidate(self.stock, "Stop Loss") 
+                self.wait = 0
+                
+
+    def OnEndOfDay(self, symbol): 
+        if self.Portfolio[self.stock].Invested:
+            self.Liquidate(self.stock, "EOD")  
+        self.wait = WAIT
