@@ -1,92 +1,95 @@
+
 #region imports
 from AlgorithmImports import *
 #endregion
 # Range Breakout
 
-# ------------------------------------------------------------
-STOCK = "SPY"; PERIOD = 30; WAIT = 0
-# ------------------------------------------------------------
-
 class RangeBreakout(QCAlgorithm):
 
     def Initialize(self):
-        self.SetStartDate(2022, 1, 1)  
-        self.SetEndDate(2022, 3, 31)  
+        # Set Dates
+        self.SetStartDate(2017,9,1)
+        self.SetEndDate(2020,9,1)  
+
+        # Set Cash
         self.SetCash(100000) 
-        self.stock = self.AddEquity(STOCK, Resolution.Minute).Symbol
-        self.hh = self.MAX(self.stock, PERIOD, Resolution.Minute, Field.High)
-        self.ll = self.MIN(self.stock, PERIOD, Resolution.Minute, Field.Low)
-        self.SetWarmUp(PERIOD + 1, Resolution.Minute)
-        self.first_30_min_HH = 0
-        self.first_30_min_LL = 0
-        self.trailingH = 0
-        self.trailingL = 0
-        self.stopMarketTicket = None
-        self.stopMarketTicketShort = None
-        self.wait = WAIT
-        self.tradeLimit = True
-        
-        # Check if the data is warmed up and ready to trade
-        self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.AfterMarketOpen(self.stock, 31), self.DailyCheck)
 
-        # If stop loss is not hit, liquidate positions 5 mins before close
-        self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.BeforeMarketClose(self.stock, 5), self.Liquidate)
-
-    def DailyCheck(self):
-        if self.IsWarmingUp: return
-        self.first_30_min_HH = self.hh.Current.Value
-        self.first_30_min_LL = self.ll.Current.Value
-        self.trailingH = self.first_30_min_HH
-        self.trailingL = self.first_30_min_LL
+        # Set Stock
+        self.symbol = self.AddEquity("SPY", Resolution.Daily).Symbol
         
-    
+        # Set lookback period
+        self.lookback = 20
+
+        # Set stop loss figures
+        self.longinitialStopRisk = 0.98
+        self.longtrailingStopRisk = 0.9
+        self.shortinitialStopRisk = 1.02
+        self.shorttrailingStopRisk = 1.1
+        self.highestPrice = 0
+        self.lowestPrice = 0        
+
+        # Schedule function 20 minutes after every market open
+        self.Schedule.On(self.DateRules.EveryDay(self.symbol), self.TimeRules.AfterMarketOpen(self.symbol, 20), Action(self.EveryMarketOpen))
+
     def OnData(self, data):
-        if self.IsWarmingUp: return
-        # if not (self.hh_d.IsReady or self.ll_d.IsReady): return
-        if self.Time.hour < 10 or self.Time.hour >= 16: return
-        if (self.first_30_min_HH ==0 or self.first_30_min_LL == 0): return
-    
-        self.wait += 1
-        if not self.wait > WAIT: return
-    
-        price = self.Securities[self.stock].Price
+        self.Plot("Data Chart", self.symbol, self.Securities[self.symbol].Close)
 
-        # If portfolio not invested, open a position if it breaks the opening range
-        if not self.Portfolio[self.stock].Invested:
-            if price > self.first_30_min_HH and self.tradeLimit == True:
-                self.SetHoldings(self.stock, 1)
-                self.stopMarketTicket = self.StopMarketOrder("SPY", -self.Portfolio["SPY"].Quantity, 0.995 * price)
-                self.tradeLimit = False
-                
-            elif price < self.first_30_min_LL and self.tradeLimit == True:
-                self.SetHoldings(self.stock, -1)
-                self.stopMarketTicketShort = self.StopMarketOrder("SPY", -self.Portfolio["SPY"].Quantity, 1.005 * price)
-                self.tradeLimit = False
-                
-        # If portfolio is invested, use a trailing stop        
-        elif self.Portfolio[self.stock].Invested:
+    def EveryMarketOpen(self):
+        # List of daily highs and lows
+        self.high = self.History(self.symbol, self.lookback, Resolution.Daily)["high"]
+        self.low = self.History(self.symbol, self.lookback, Resolution.Daily)["low"]
+        
+        # Buy in case of high breakout
+        if not self.Securities[self.symbol].Invested and self.Securities[self.symbol].Close >= max(self.high[:-1]):
+            self.SetHoldings(self.symbol, 1)
+            self.breakoutlvl = max(self.high[:-1])
+            self.highestPrice = self.breakoutlvl   
+
+        # Sell in case of low breakout
+        if not self.Securities[self.symbol].Invested and self.Securities[self.symbol].Close <= min(self.low[:-1]):
+            self.SetHoldings(self.symbol, -1)
+            self.breakoutlvl = min(self.low[:-1])
+            self.lowestPrice = self.breakoutlvl
+        
+        # Create trailing stop loss if invested 
+        if self.Securities[self.symbol].Invested:
             
-            if self.Securities["SPY"].High > self.trailingH:
-                self.trailingH = self.Securities["SPY"].High
+            # If no order exists, send stop-loss
+            if not self.Transactions.GetOpenOrders(self.symbol) and self.Securities[self.symbol].Close >= max(self.high[:-1]):
+                self.stopMarketTicket = self.StopMarketOrder(self.symbol, \
+                                        -self.Portfolio[self.symbol].Quantity, \
+                                        self.longinitialStopRisk * self.breakoutlvl)
+
+            if not self.Transactions.GetOpenOrders(self.symbol) and self.Securities[self.symbol].Close <= min(self.low[:-1]):
+                self.stopMarketTicket = self.StopMarketOrder(self.symbol, \
+                                        -self.Portfolio[self.symbol].Quantity, \
+                                        self.shortinitialStopRisk * self.breakoutlvl)
+          
+            # Check if the asset's price is higher than highestPrice & trailing stop price not below initial stop price
+            if self.Securities[self.symbol].Close > self.highestPrice and \
+                    self.longinitialStopRisk * self.breakoutlvl < self.Securities[self.symbol].Close * self.longtrailingStopRisk:
+                # Save the new high to highestPrice
+                self.highestPrice = self.Securities[self.symbol].Close
+                # Update the stop price
                 updateFields = UpdateOrderFields()
-                updateFields.StopPrice = self.trailingH * 0.995
-                if self.stopMarketTicket != None: ### your update request was returning NoneType because of your conditional logic, attempting to update tickets that did not exist
-                    self.stopMarketTicket.Update(updateFields)
+                updateFields.StopPrice = self.Securities[self.symbol].Close * self.longtrailingStopRisk
+                self.stopMarketTicket.Update(updateFields)
+                
+                # Print the new stop price with Debug()
+                self.Debug(updateFields.StopPrice)
 
-            elif self.Securities["SPY"].Low < self.trailingL:
-                self.trailingL = self.Securities["SPY"].Low
+            # Check if the asset's price is lower than lowestPrice & trailing stop price not above initial stop price
+            if self.Securities[self.symbol].Close < self.lowestPrice and \
+                    self.shortinitialStopRisk * self.breakoutlvl > self.Securities[self.symbol].Close * self.shorttrailingStopRisk:
+                # Save the new high to lowestPrice
+                self.lowestPrice = self.Securities[self.symbol].Close
+                # Update the stop price
                 updateFields = UpdateOrderFields()
-                updateFields.StopPrice = self.trailingL * 1.005
-                if self.stopMarketTicketShort != None: ### your update request was returning NoneType because of your conditional logic, attempting to update tickets that did not exist
-                    self.stopMarketTicketShort.Update(updateFields)
-
-
-    def OnEndOfDay(self, symbol): 
-        self.first_30_min_HH = 0
-        self.first_30_min_LL = 0
-        self.trailingH = 0
-        self.trailingL = 0
-        self.stopMarketTicket = None
-        self.stopMarketTicketShort = None
-        self.tradeLimit = True
-        self.wait = WAIT
+                updateFields.StopPrice = self.Securities[self.symbol].Close * self.shorttrailingStopRisk
+                self.stopMarketTicket.Update(updateFields)
+                
+                # Print the new stop price with Debug()
+                self.Debug(updateFields.StopPrice)
+            
+            # Plot trailing stop's price
+            self.Plot("Data Chart", "Stop Price", self.stopMarketTicket.Get(OrderField.StopPrice))
