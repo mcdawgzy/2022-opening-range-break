@@ -1,95 +1,72 @@
-
 #region imports
 from AlgorithmImports import *
 #endregion
 # Range Breakout
 
+# ------------------------------------------------------------
+STOCK = "SPY"; PERIOD = 20
+# ------------------------------------------------------------
+
 class RangeBreakout(QCAlgorithm):
 
     def Initialize(self):
         # Set Dates
-        self.SetStartDate(2017,9,1)
-        self.SetEndDate(2020,9,1)  
+        self.SetStartDate(2022,5,10)
+        self.SetEndDate(2022,5,11)
 
         # Set Cash
-        self.SetCash(100000) 
+        self.SetCash(100000)
 
-        # Set Stock
-        self.symbol = self.AddEquity("SPY", Resolution.Daily).Symbol
-        
-        # Set lookback period
-        self.lookback = 20
+        # Add Asset
+        self.symbol = self.AddEquity(STOCK, Resolution.Minute).Symbol
 
-        # Set stop loss figures
-        self.longinitialStopRisk = 0.98
-        self.longtrailingStopRisk = 0.9
-        self.shortinitialStopRisk = 1.02
-        self.shorttrailingStopRisk = 1.1
-        self.highestPrice = 0
-        self.lowestPrice = 0        
+        # Add Donchian Channel
+        self.dch = self.DCH(STOCK, 20)
 
-        # Schedule function 20 minutes after every market open
-        self.Schedule.On(self.DateRules.EveryDay(self.symbol), self.TimeRules.AfterMarketOpen(self.symbol, 20), Action(self.EveryMarketOpen))
+        # Set WarmUp Period
+        self.SetWarmUp(PERIOD + 1, Resolution.Minute)
+
+        # If stop loss is not hit, liquidate positions 5 mins before close
+        self.Schedule.On(self.DateRules.EveryDay(self.symbol), self.TimeRules.BeforeMarketClose(self.symbol, 5), self.Liquidate)
 
     def OnData(self, data):
-        self.Plot("Data Chart", self.symbol, self.Securities[self.symbol].Close)
+        if self.IsWarmingUp:
+            return
 
-    def EveryMarketOpen(self):
-        # List of daily highs and lows
-        self.high = self.History(self.symbol, self.lookback, Resolution.Daily)["high"]
-        self.low = self.History(self.symbol, self.lookback, Resolution.Daily)["low"]
+        if self.Time.hour < 13 or self.Time.hour >= 16: 
+            return
         
-        # Buy in case of high breakout
-        if not self.Securities[self.symbol].Invested and self.Securities[self.symbol].Close >= max(self.high[:-1]):
-            self.SetHoldings(self.symbol, 1)
-            self.breakoutlvl = max(self.high[:-1])
-            self.highestPrice = self.breakoutlvl   
+        # Set risk parameters
+        price = self.Securities[self.symbol].Price
+        risk = self.Portfolio.TotalPortfolioValue / 400
 
-        # Sell in case of low breakout
-        if not self.Securities[self.symbol].Invested and self.Securities[self.symbol].Close <= min(self.low[:-1]):
-            self.SetHoldings(self.symbol, -1)
-            self.breakoutlvl = min(self.low[:-1])
-            self.lowestPrice = self.breakoutlvl
-        
-        # Create trailing stop loss if invested 
-        if self.Securities[self.symbol].Invested:
+        # Set Donchian Channel parameters
+        donchUpper = self.dch.UpperBand.Current.Value
+        donchLower = self.dch.LowerBand.Current.Value
+        donchBasis = (donchLower + (donchUpper - donchLower)/2)
+        donchRange = donchUpper - donchLower
+
+        # Calculate Dynamic Order Size
+        shareqty = Math.Round(risk / donchRange)
+
+        # If portfolio not invested and price touches upper band, buy with stop loss at middle band
+        if not self.Portfolio.Invested and price > donchUpper:
+            self.MarketOrder(STOCK, shareqty)
+
             
-            # If no order exists, send stop-loss
-            if not self.Transactions.GetOpenOrders(self.symbol) and self.Securities[self.symbol].Close >= max(self.high[:-1]):
-                self.stopMarketTicket = self.StopMarketOrder(self.symbol, \
-                                        -self.Portfolio[self.symbol].Quantity, \
-                                        self.longinitialStopRisk * self.breakoutlvl)
+        # If portfolio not invested and price touches lower band, sell
+        if not self.Portfolio.Invested and price < donchLower:
+            self.MarketOrder(STOCK, -shareqty)
 
-            if not self.Transactions.GetOpenOrders(self.symbol) and self.Securities[self.symbol].Close <= min(self.low[:-1]):
-                self.stopMarketTicket = self.StopMarketOrder(self.symbol, \
-                                        -self.Portfolio[self.symbol].Quantity, \
-                                        self.shortinitialStopRisk * self.breakoutlvl)
-          
-            # Check if the asset's price is higher than highestPrice & trailing stop price not below initial stop price
-            if self.Securities[self.symbol].Close > self.highestPrice and \
-                    self.longinitialStopRisk * self.breakoutlvl < self.Securities[self.symbol].Close * self.longtrailingStopRisk:
-                # Save the new high to highestPrice
-                self.highestPrice = self.Securities[self.symbol].Close
-                # Update the stop price
-                updateFields = UpdateOrderFields()
-                updateFields.StopPrice = self.Securities[self.symbol].Close * self.longtrailingStopRisk
-                self.stopMarketTicket.Update(updateFields)
-                
-                # Print the new stop price with Debug()
-                self.Debug(updateFields.StopPrice)
+        # If portfolio invested and long
+        if self.Portfolio.Invested and self.Portfolio[self.symbol].Quantity > 0:
+            # Set trailing long stop loss
+            if price < donchBasis:
+                self.Liquidate(tag="Long SL")
 
-            # Check if the asset's price is lower than lowestPrice & trailing stop price not above initial stop price
-            if self.Securities[self.symbol].Close < self.lowestPrice and \
-                    self.shortinitialStopRisk * self.breakoutlvl > self.Securities[self.symbol].Close * self.shorttrailingStopRisk:
-                # Save the new high to lowestPrice
-                self.lowestPrice = self.Securities[self.symbol].Close
-                # Update the stop price
-                updateFields = UpdateOrderFields()
-                updateFields.StopPrice = self.Securities[self.symbol].Close * self.shorttrailingStopRisk
-                self.stopMarketTicket.Update(updateFields)
+        # If portfolio invested and short
+        if self.Portfolio.Invested and self.Portfolio[self.symbol].Quantity < 0:
+            # Set trailing short stop loss
+            if price > donchBasis:
+                self.Liquidate(tag="Short SL")
                 
-                # Print the new stop price with Debug()
-                self.Debug(updateFields.StopPrice)
-            
-            # Plot trailing stop's price
-            self.Plot("Data Chart", "Stop Price", self.stopMarketTicket.Get(OrderField.StopPrice))
