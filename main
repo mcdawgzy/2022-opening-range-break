@@ -5,14 +5,14 @@ from AlgorithmImports import *
 # Opening Range Breakout
 
 # ------------------------------------------------------------
-STOCK = "SPY"; PERIOD = 5; WAIT = 0
+STOCK = "AMD"; PERIOD = 15; WAIT = 0; MULTIPLIER = 5
 # ------------------------------------------------------------
 
 class OpeningRangeBreakout(QCAlgorithm):
 
     def Initialize(self):
-        self.SetStartDate(2022, 5, 25)  
-        self.SetEndDate(2022, 5, 31)  
+        self.SetStartDate(2010, 1, 1)  
+        self.SetEndDate(2015, 12, 31)  
         self.SetCash(100000) 
         self.stock = self.AddEquity(STOCK, Resolution.Minute).Symbol
         self.hh = self.MAX(self.stock, PERIOD, Resolution.Minute, Field.High)
@@ -37,9 +37,9 @@ class OpeningRangeBreakout(QCAlgorithm):
         if (self.openingrange_HH == 0 or self.openingrange_LL == 0): return
     
         price = self.Securities[self.stock].Price
-        risk = self.Portfolio.TotalPortfolioValue / 100
+        risk = self.Portfolio.TotalPortfolioValue / 10000
         rangewidth = self.openingrange_HH - self.openingrange_LL
-        shareqty = Math.Round(risk / rangewidth / 10)
+        shareqty = Math.Round(risk / rangewidth)
 
         if not self.Portfolio[self.stock].Invested and self.tradeLimit == True:
             if price > self.openingrange_HH:
@@ -53,11 +53,11 @@ class OpeningRangeBreakout(QCAlgorithm):
         if self.Portfolio[self.stock].Invested and self.Portfolio[self.stock].Quantity > 0:
             if price < self.openingrange_LL:
                 self.Liquidate(tag="Long SL")
-            elif price >= (self.openingrange_HH + rangewidth):
+            elif price >= (self.openingrange_HH + (MULTIPLIER * rangewidth)):
                 self.Liquidate(tag="Long TP")
 
         if self.Portfolio[self.stock].Invested and self.Portfolio[self.stock].Quantity < 0:
             if price > self.openingrange_HH:
                 self.Liquidate(tag="Short SL")
-            elif price <= (self.openingrange_LL - rangewidth):
+            elif price <= (self.openingrange_LL - (MULTIPLIER * rangewidth)):
                 self.Liquidate(tag="Short TP")
