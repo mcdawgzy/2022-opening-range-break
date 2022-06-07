@@ -5,7 +5,7 @@ from AlgorithmImports import *
 # Opening Range Breakout
 
 # ------------------------------------------------------------
-STOCK = "AMD"; PERIOD = 15; WAIT = 0; MULTIPLIER = 5
+STOCK = "AMD"; PERIOD = 5; WAIT = 0; MULTIPLIER = 1
 # ------------------------------------------------------------
 
 class OpeningRangeBreakout(QCAlgorithm):
@@ -21,7 +21,7 @@ class OpeningRangeBreakout(QCAlgorithm):
         self.openingrange_HH = 0
         self.openingrange_LL = 0
         self.tradeLimit = True
-        self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.AfterMarketOpen(self.stock, PERIOD), self.DailyCheck)
+        self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.AfterMarketOpen(self.stock, PERIOD+1), self.DailyCheck)
 
         self.Schedule.On(self.DateRules.EveryDay(self.stock), self.TimeRules.BeforeMarketClose(self.stock, 5), self.Liquidate)
 
